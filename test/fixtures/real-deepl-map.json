@@ -1,0 +1,10 @@
+{
+  "_note": "本物の DeepL MCP (translate-text, target en-GB) で取得した実訳。pipeline-e2e で StaticMapTranslator に流し込み、実 docx を生成する。Overview 概要 は source=en 扱いのため漢字が残る（混在スクリプトの実例）。",
+  "Jaarverslag 2025": "Annual report 2025",
+  "Les résultats du premier trimestre dépassent les prévisions.": "First-quarter results exceed forecasts.",
+  "Die Produktion wurde im April vollständig automatisiert.": "Production was fully automated in April.",
+  "Inhoudsopgave": "Table of contents",
+  "当社は来年、海外市場へ進出します。": "The company will enter foreign markets next year.",
+  "Vertrouwelijk": "Confidential",
+  "Overview 概要": "Overview 概要"
+}

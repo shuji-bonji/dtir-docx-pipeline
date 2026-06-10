@@ -1,0 +1,24 @@
+# dependencies & build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# logs
+*.log
+npm-debug.log*
+.npm/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# mount leftovers
+.fuse_hidden*
+*.orphaned
+
+# e2e scratch output
+demo-out/
+
+# coverage
+coverage/
