@@ -4,16 +4,31 @@
   "private": true,
   "description": "End-to-end harness wiring dtir-ooxml-reader-mcp → dtir-translate-mcp → dtir-ooxml-writer-mcp. Home of the real reader→translate→writer e2e and future LangGraph orchestration.",
   "type": "module",
-  "exports": { ".": { "types": "./src/pipeline.ts", "import": "./src/pipeline.ts" } },
+  "exports": {
+    ".": {
+      "types": "./src/pipeline.ts",
+      "import": "./src/pipeline.ts"
+    }
+  },
   "scripts": {
     "test:e2e": "tsx test/pipeline-e2e.ts",
     "typecheck": "tsc --noEmit"
   },
-  "engines": { "node": ">=20" },
-  "keywords": ["dtir", "pipeline", "docx", "translation", "langgraph", "orchestration"],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "dtir",
+    "pipeline",
+    "docx",
+    "translation",
+    "langgraph",
+    "orchestration"
+  ],
   "author": "shuji-bonji",
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@shuji-bonji/doc-translation-ir": "file:../doc-translation-ir",
     "@shuji-bonji/dtir-ooxml-reader-mcp": "file:../dtir-ooxml-reader-mcp",
     "@shuji-bonji/dtir-ooxml-writer-mcp": "file:../dtir-ooxml-writer-mcp",

@@ -2,17 +2,18 @@
 
 > この文書を読むと、**Claude Desktop / Claude Code から DTIR MCP 群を呼び出し、
 > 混在言語 `.docx` を書式・画像・目次を崩さずに翻訳できる**ようになる。
-> ローカル LLM での利用は本文書の範囲外（エンジン切替の項で接続点のみ示す）。
+> ローカル LLM（Ollama）でのヘッドレス利用は [`local-llm-implementation-guide.ja.md`](./local-llm-implementation-guide.ja.md) を参照
+> （本文書はエンジン切替の接続点のみ示す）。
 
 ## 対象リポジトリ
 
-| リポジトリ | 役割 | MCP ツール |
-|---|---|---|
-| [doc-translation-ir](https://github.com/shuji-bonji/doc-translation-ir) | 共有契約 (DTIR v0.1)。型・スキーマのみ、サーバではない | — |
-| [dtir-ooxml-reader-mcp](https://github.com/shuji-bonji/dtir-ooxml-reader-mcp) | docx → DTIR セグメント表 | `docx_to_dtir` |
-| [dtir-translate-mcp](https://github.com/shuji-bonji/dtir-translate-mcp) | DTIR の `translation` を充填（DeepL / LLM） | `translate_dtir` |
-| [dtir-ooxml-writer-mcp](https://github.com/shuji-bonji/dtir-ooxml-writer-mcp) | 翻訳済み DTIR ＋ 元 docx → 訳 docx | `dtir_to_docx` |
-| [dtir-docx-pipeline](https://github.com/shuji-bonji/dtir-docx-pipeline) | E2E ハーネス（ライブラリ利用・テスト用。MCP 接続では不要） | — |
+| リポジトリ                                                                    | 役割                                                       | MCP ツール       |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------- | ---------------- |
+| [doc-translation-ir](https://github.com/shuji-bonji/doc-translation-ir)       | 共有契約 (DTIR v0.1)。型・スキーマのみ、サーバではない     | —                |
+| [dtir-ooxml-reader-mcp](https://github.com/shuji-bonji/dtir-ooxml-reader-mcp) | docx → DTIR セグメント表                                   | `docx_to_dtir`   |
+| [dtir-translate-mcp](https://github.com/shuji-bonji/dtir-translate-mcp)       | DTIR の `translation` を充填（DeepL / LLM）                | `translate_dtir` |
+| [dtir-ooxml-writer-mcp](https://github.com/shuji-bonji/dtir-ooxml-writer-mcp) | 翻訳済み DTIR ＋ 元 docx → 訳 docx                         | `dtir_to_docx`   |
+| [dtir-docx-pipeline](https://github.com/shuji-bonji/dtir-docx-pipeline)       | E2E ハーネス（ライブラリ利用・テスト用。MCP 接続では不要） | —                |
 
 ```mermaid
 flowchart LR
@@ -53,20 +54,20 @@ done
   "mcpServers": {
     "dtir-ooxml-reader": {
       "command": "node",
-      "args": ["/ABS/PATH/dtir-ooxml-reader-mcp/dist/index.js"]
+      "args": ["/ABS/PATH/dtir-ooxml-reader-mcp/dist/index.js"],
     },
     "dtir-translate": {
       "command": "node",
       "args": ["/ABS/PATH/dtir-translate-mcp/dist/index.js"],
-      "env": { "DEEPL_API_KEY": "your-deepl-key" }
+      "env": { "DEEPL_API_KEY": "your-deepl-key" },
       // クラウドLLMエンジンの場合:
       // "env": { "LLM_MODEL": "gpt-4o-mini", "LLM_API_KEY": "sk-..." }
     },
     "dtir-ooxml-writer": {
       "command": "node",
-      "args": ["/ABS/PATH/dtir-ooxml-writer-mcp/dist/index.js"]
-    }
-  }
+      "args": ["/ABS/PATH/dtir-ooxml-writer-mcp/dist/index.js"],
+    },
+  },
 }
 ```
 
@@ -91,11 +92,11 @@ claude mcp add -e LLM_MODEL=gpt-4o-mini -e LLM_API_KEY=sk-... dtir-translate -- 
 `translate_dtir` のエンジンは tool 引数 `engine`、省略時は env で自動選択
 （`LLM_MODEL` があれば `llm`、なければ `deepl`）。
 
-| engine | 必要 env | 備考 |
-|---|---|---|
-| `deepl` | `DEEPL_API_KEY` | HTTP API の `text[]` 配列で group 単位 1 リクエスト。`apiUrl` 引数で Pro 切替（既定 api-free） |
-| `llm`（クラウド） | `LLM_MODEL`, `LLM_API_KEY` | OpenAI 互換。既定 baseUrl は `https://api.openai.com/v1` |
-| `llm`（ローカル） | `LLM_MODEL`, `LLM_BASE_URL` | 例: `LLM_BASE_URL=http://localhost:11434/v1`（Ollama）。→ ローカル LLM 編で詳述 |
+| engine            | 必要 env                    | 備考                                                                                                                                            |
+| ----------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deepl`           | `DEEPL_API_KEY`             | HTTP API の `text[]` 配列で group 単位 1 リクエスト。`apiUrl` 引数で Pro 切替（既定 api-free）                                                  |
+| `llm`（クラウド） | `LLM_MODEL`, `LLM_API_KEY`  | OpenAI 互換。既定 baseUrl は `https://api.openai.com/v1`                                                                                        |
+| `llm`（ローカル） | `LLM_MODEL`, `LLM_BASE_URL` | 例: `LLM_BASE_URL=http://localhost:11434/v1`（Ollama）。詳細は [`local-llm-implementation-guide.ja.md`](./local-llm-implementation-guide.ja.md) |
 
 ## 5. 利用フロー（会話での使い方）
 
@@ -137,9 +138,9 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
 
 3 ツールはすべて base64 / JSON 文字列でやり取りする。元 docx を base64 化する手段が環境ごとに異なる:
 
-| 環境 | 方法 |
-|---|---|
-| Claude Code / Cowork | ファイルを直接読めるため、Claude がシェル等で base64 化して渡す（推奨） |
+| 環境                           | 方法                                                                                                                       |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code / Cowork           | ファイルを直接読めるため、Claude がシェル等で base64 化して渡す（推奨）                                                    |
 | Claude Desktop（チャットのみ） | filesystem 系 MCP を併用してファイルを読ませる。docx 添付はテキスト抽出されてしまい、バイナリとして MCP に渡せない点に注意 |
 
 ### 5.4 Claude 自身が翻訳する変則パターン
@@ -157,32 +158,32 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
 
 ### `docx_to_dtir` (dtir-ooxml-reader)
 
-| 引数 | 必須 | 意味 |
-|---|---|---|
-| `docxBase64` | ✅ | base64 エンコードした .docx |
-| `fileName` | – | 元ファイル名（メタ情報） |
-| `targetLang` | – | 翻訳先 BCP47（DTIR `language.target` に格納） |
+| 引数         | 必須 | 意味                                          |
+| ------------ | ---- | --------------------------------------------- |
+| `docxBase64` | ✅   | base64 エンコードした .docx                   |
+| `fileName`   | –    | 元ファイル名（メタ情報）                      |
+| `targetLang` | –    | 翻訳先 BCP47（DTIR `language.target` に格納） |
 
 戻り: DTIR (`IRDocument`) の JSON。
 
 ### `translate_dtir` (dtir-translate)
 
-| 引数 | 必須 | 意味 |
-|---|---|---|
-| `dtirJson` | ✅ | reader 出力の DTIR JSON 文字列 |
-| `targetLang` | – | 翻訳先 BCP47（既定: `dtir.language.target`） |
-| `engine` | – | `deepl` \| `llm`（既定: `LLM_MODEL` があれば llm） |
-| `apiUrl` | – | DeepL API ベース URL（既定 `https://api-free.deepl.com`） |
+| 引数         | 必須 | 意味                                                      |
+| ------------ | ---- | --------------------------------------------------------- |
+| `dtirJson`   | ✅   | reader 出力の DTIR JSON 文字列                            |
+| `targetLang` | –    | 翻訳先 BCP47（既定: `dtir.language.target`）              |
+| `engine`     | –    | `deepl` \| `llm`（既定: `LLM_MODEL` があれば llm）        |
+| `apiUrl`     | –    | DeepL API ベース URL（既定 `https://api-free.deepl.com`） |
 
 戻り: `{ engine, stats: { translated, batchCalls, evaluated }, dtir }`。
 
 ### `dtir_to_docx` (dtir-ooxml-writer)
 
-| 引数 | 必須 | 意味 |
-|---|---|---|
-| `dtirJson` | ✅ | 翻訳済み DTIR の JSON 文字列 |
-| `originalDocxBase64` | ✅ | **元 .docx** の base64（reader に渡したものと同一） |
-| `onMissingTranslation` | – | `keep`（既定・原文維持）\| `error` |
+| 引数                   | 必須 | 意味                                                |
+| ---------------------- | ---- | --------------------------------------------------- |
+| `dtirJson`             | ✅   | 翻訳済み DTIR の JSON 文字列                        |
+| `originalDocxBase64`   | ✅   | **元 .docx** の base64（reader に渡したものと同一） |
+| `onMissingTranslation` | –    | `keep`（既定・原文維持）\| `error`                  |
 
 戻り: `{ fileName, byteSize, docxBase64 }`。
 
@@ -207,4 +208,4 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
 
 - DTIR 契約の設計詳細: `doc-translation-ir/README.md`
 - 実機 E2E の検証結果（実 DeepL・xCOMET 平均 0.993）: `dtir-translate-mcp/README.md` / 本リポジトリ `demo/`
-- 次フェーズ: ローカル LLM（Ollama）エンジンでの利用 → 別マニュアル予定
+- ローカル LLM（Ollama）エンジンでのヘッドレス利用・実装手順: [`local-llm-implementation-guide.ja.md`](./local-llm-implementation-guide.ja.md)

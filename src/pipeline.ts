@@ -13,7 +13,7 @@ import {
   type Translator,
   type TranslateStats,
 } from '@shuji-bonji/dtir-translate-mcp/translate';
-import type { IRDocument } from '@shuji-bonji/doc-translation-ir';
+import type { IRDocument, IRSegment } from '@shuji-bonji/doc-translation-ir';
 
 export interface TranslateDocxOptions {
   fileName?: string;
@@ -54,4 +54,195 @@ export async function translateDocx(
     onMissingTranslation: options.onMissingTranslation ?? 'keep',
   });
   return { docx: out, dtir, stats };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — xCOMET 品質ゲート＋部分再翻訳ループ
+// ---------------------------------------------------------------------------
+
+/**
+ * バッチ採点できる Evaluator（xcomet_batch_evaluate）。
+ * XcometMcpEvaluator が構造的に満たす。CPU 推論は1ペア数秒かかるため、
+ * ゲートは単発 evaluate の逐次ではなくこちらを使う。
+ */
+export interface BatchEvaluator {
+  evaluateBatch(
+    pairs: { source: string; translation: string }[],
+  ): Promise<{ score: number; hasCritical: boolean }[]>;
+}
+
+export interface QualityGateOptions {
+  fileName?: string;
+  targetLang: string;
+  /** これ未満のスコアは再翻訳対象。既定 0.6。 */
+  threshold?: number;
+  /** 再翻訳ラウンド上限。既定 2。 */
+  maxRounds?: number;
+  onMissingTranslation?: 'keep' | 'error';
+  /** ラウンドごとのログ（既定 console.error）。 */
+  log?: (line: string) => void;
+}
+
+export interface GateRoundLog {
+  /** 0=初回採点、1..=再翻訳ラウンド。 */
+  round: number;
+  evaluated: number;
+  averageScore: number;
+  failing: number;
+  critical: number;
+  /** 再翻訳ラウンドで訳が改善・採用されたセグメント数（round 0 では 0）。 */
+  adopted: number;
+}
+
+export interface TranslateDocxWithGateResult extends TranslateDocxResult {
+  gate: {
+    rounds: GateRoundLog[];
+    /** 全ラウンド後も閾値未満のまま残ったセグメント id。 */
+    remainingFailing: string[];
+  };
+}
+
+const isFailing = (s: IRSegment, threshold: number): boolean =>
+  s.quality != null && (s.quality.score < threshold || s.quality.hasCritical);
+
+/**
+ * translateDocx の品質ゲート版（固定 DAG: read→translate→evaluate→retry*→write）。
+ *
+ * 1. 全 translatable を翻訳（translateDtir）
+ * 2. xCOMET で一括採点し各セグメントの quality を充填
+ * 3. score < threshold または critical のセグメントだけ再翻訳→再採点し、
+ *    **改善した場合のみ採用**（劣化したら旧訳を保持）
+ * 4. maxRounds で打ち切り。残った低品質セグメントは gate.remainingFailing に記録
+ *
+ * 再翻訳ループはこの orchestrator 層に置き、translate-mcp は変更しない。
+ */
+export async function translateDocxWithGate(
+  docx: Buffer,
+  translator: Translator,
+  evaluator: BatchEvaluator,
+  options: QualityGateOptions,
+): Promise<TranslateDocxWithGateResult> {
+  const threshold = options.threshold ?? 0.6;
+  const maxRounds = options.maxRounds ?? 2;
+  const log = options.log ?? ((line: string) => console.error(line));
+
+  // read → translate（全 translatable を1回翻訳。採点は分離してバッチで行う）
+  const dtir = await docxToDtir(docx, {
+    fileName: options.fileName,
+    targetLang: options.targetLang,
+  });
+  const { stats } = await translateDtir(dtir, translator, {
+    targetLang: options.targetLang,
+  });
+
+  const translatedSegs = dtir.segments.filter(
+    (s): s is IRSegment & { translation: NonNullable<IRSegment['translation']> } =>
+      s.translatable && s.translation != null,
+  );
+
+  // round 0 — 全セグメントを一括採点
+  const rounds: GateRoundLog[] = [];
+  const scoreAll = async (segs: typeof translatedSegs, round: number, adopted: number) => {
+    const results = await evaluator.evaluateBatch(
+      segs.map((s) => ({ source: s.text.source, translation: s.translation.text })),
+    );
+    segs.forEach((s, i) => {
+      s.quality = { score: results[i].score, hasCritical: results[i].hasCritical, errors: [] };
+    });
+    const failing = translatedSegs.filter((s) => isFailing(s, threshold));
+    const avg =
+      translatedSegs.reduce((a, s) => a + (s.quality?.score ?? 0), 0) /
+      Math.max(translatedSegs.length, 1);
+    const entry: GateRoundLog = {
+      round,
+      evaluated: segs.length,
+      averageScore: Number(avg.toFixed(4)),
+      failing: failing.length,
+      critical: translatedSegs.filter((s) => s.quality?.hasCritical).length,
+      adopted,
+    };
+    rounds.push(entry);
+    log(
+      `[gate] round=${round} evaluated=${entry.evaluated} avg=${entry.averageScore} ` +
+        `failing=${entry.failing} critical=${entry.critical} adopted=${entry.adopted}`,
+    );
+    return failing;
+  };
+
+  let failing = await scoreAll(translatedSegs, 0, 0);
+
+  // retry — 低品質セグメントだけ group(=source言語) ごとに再翻訳し、改善時のみ採用
+  for (let round = 1; round <= maxRounds && failing.length > 0; round++) {
+    const byGroup = new Map<string, typeof failing>();
+    for (const s of failing) {
+      const key = s.group ?? '';
+      (byGroup.get(key) ?? byGroup.set(key, []).get(key)!).push(s);
+    }
+
+    let adopted = 0;
+    for (const [group, segs] of byGroup) {
+      const sourceLang = group === '' ? null : group;
+      const candidates = await translator.translateBatch(
+        segs.map((s) => s.text.source),
+        { sourceLang, targetLang: options.targetLang },
+      );
+      if (candidates.length !== segs.length) {
+        throw new Error(
+          `境界破壊(retry): 入力 ${segs.length} 件に対し戻り ${candidates.length} 件（group=${group}）`,
+        );
+      }
+      const evals = await evaluator.evaluateBatch(
+        segs.map((s, i) => ({ source: s.text.source, translation: candidates[i] })),
+      );
+      segs.forEach((s, i) => {
+        const oldScore = s.quality?.score ?? 0;
+        const oldCritical = s.quality?.hasCritical ?? false;
+        const better =
+          evals[i].score > oldScore || (oldCritical && !evals[i].hasCritical);
+        if (better) {
+          s.translation = {
+            ...s.translation,
+            text: candidates[i],
+            at: new Date().toISOString(),
+          };
+          s.quality = { score: evals[i].score, hasCritical: evals[i].hasCritical, errors: [] };
+          adopted++;
+        }
+      });
+    }
+
+    failing = translatedSegs.filter((s) => isFailing(s, threshold));
+    rounds.push({
+      round,
+      evaluated: failing.length,
+      averageScore: Number(
+        (
+          translatedSegs.reduce((a, s) => a + (s.quality?.score ?? 0), 0) /
+          Math.max(translatedSegs.length, 1)
+        ).toFixed(4),
+      ),
+      failing: failing.length,
+      critical: translatedSegs.filter((s) => s.quality?.hasCritical).length,
+      adopted,
+    });
+    const r = rounds[rounds.length - 1];
+    log(
+      `[gate] round=${round} avg=${r.averageScore} failing=${r.failing} ` +
+        `critical=${r.critical} adopted=${r.adopted}`,
+    );
+  }
+
+  if (failing.length > 0) {
+    log(`[gate] 打ち切り: ${failing.length} セグメントが閾値 ${threshold} 未満のまま`);
+  }
+
+  const out = await dtirToDocx(dtir, docx, {
+    onMissingTranslation: options.onMissingTranslation ?? 'keep',
+  });
+  return {
+    docx: out,
+    dtir,
+    stats,
+    gate: { rounds, remainingFailing: failing.map((s) => s.id) },
+  };
 }
