@@ -9,6 +9,9 @@ import { docxToDtir } from '@shuji-bonji/dtir-ooxml-reader-mcp/reader';
 import { dtirToDocx } from '@shuji-bonji/dtir-ooxml-writer-mcp/writer';
 import {
   translateDtir,
+  chunkBySegments,
+  DEFAULT_BATCH_LIMITS,
+  type BatchLimits,
   type Evaluator,
   type Translator,
   type TranslateStats,
@@ -22,6 +25,8 @@ export interface TranslateDocxOptions {
   evaluator?: Evaluator;
   /** 未翻訳セグメントの扱い（既定 keep=原文維持）。 */
   onMissingTranslation?: 'keep' | 'error';
+  /** バッチのサイズ上限（長文の単一巨大バッチを防ぐ。既定 DEFAULT_BATCH_LIMITS）。 */
+  limits?: BatchLimits;
 }
 
 export interface TranslateDocxResult {
@@ -49,6 +54,7 @@ export async function translateDocx(
   const { stats } = await translateDtir(dtir, translator, {
     targetLang: options.targetLang,
     evaluator: options.evaluator,
+    limits: options.limits,
   });
   const out = await dtirToDocx(dtir, docx, {
     onMissingTranslation: options.onMissingTranslation ?? 'keep',
@@ -79,6 +85,8 @@ export interface QualityGateOptions {
   /** 再翻訳ラウンド上限。既定 2。 */
   maxRounds?: number;
   onMissingTranslation?: 'keep' | 'error';
+  /** バッチのサイズ上限（初回翻訳・再翻訳の両方に適用。既定 DEFAULT_BATCH_LIMITS）。 */
+  limits?: BatchLimits;
   /** ラウンドごとのログ（既定 console.error）。 */
   log?: (line: string) => void;
 }
@@ -124,6 +132,7 @@ export async function translateDocxWithGate(
 ): Promise<TranslateDocxWithGateResult> {
   const threshold = options.threshold ?? 0.6;
   const maxRounds = options.maxRounds ?? 2;
+  const limits = options.limits ?? DEFAULT_BATCH_LIMITS;
   const log = options.log ?? ((line: string) => console.error(line));
 
   // read → translate（全 translatable を1回翻訳。採点は分離してバッチで行う）
@@ -133,6 +142,7 @@ export async function translateDocxWithGate(
   });
   const { stats } = await translateDtir(dtir, translator, {
     targetLang: options.targetLang,
+    limits,
   });
 
   const translatedSegs = dtir.segments.filter(
@@ -182,14 +192,19 @@ export async function translateDocxWithGate(
     let adopted = 0;
     for (const [group, segs] of byGroup) {
       const sourceLang = group === '' ? null : group;
-      const candidates = await translator.translateBatch(
-        segs.map((s) => s.text.source),
-        { sourceLang, targetLang: options.targetLang },
-      );
-      if (candidates.length !== segs.length) {
-        throw new Error(
-          `境界破壊(retry): 入力 ${segs.length} 件に対し戻り ${candidates.length} 件（group=${group}）`,
+      // 再翻訳もサイズ上限でチャンク化（初回翻訳と同じ境界・順序保持）。
+      const candidates: string[] = [];
+      for (const chunk of chunkBySegments(segs, limits)) {
+        const out = await translator.translateBatch(
+          chunk.map((s) => s.text.source),
+          { sourceLang, targetLang: options.targetLang },
         );
+        if (out.length !== chunk.length) {
+          throw new Error(
+            `境界破壊(retry): 入力 ${chunk.length} 件に対し戻り ${out.length} 件（group=${group}）`,
+          );
+        }
+        candidates.push(...out);
       }
       const evals = await evaluator.evaluateBatch(
         segs.map((s, i) => ({ source: s.text.source, translation: candidates[i] })),

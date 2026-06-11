@@ -16,6 +16,10 @@
  *
  *   ENGINE              'deepl' | 'llm'（省略時: DEEPL_API_KEY があれば deepl=a-3、無ければ llm=b-3）
  *   DEEPL_API_KEY       engine=deepl 用の DeepL キー（DEEPL_API_URL で Pro 切替）
+ *   GLOSSARY_PATH       用語集 Glossary JSON のパス（任意）。LLM はプロンプト注入、
+ *                       DeepL は deeplIds の glossary_id を source 言語別に適用
+ *   BATCH_MAX_ITEMS     1バッチの最大セグメント数（既定 deepl=50 / llm=20）
+ *   BATCH_MAX_CHARS     1バッチの最大合計文字数（既定 deepl=120000 / llm=4000）
  *
  *   XCOMET_GATE         "1" で Phase 2 品質ゲート＋再翻訳ループを有効化
  *   XCOMET_PYTHON_PATH  venv の python（例 ~/.xcomet-venv/bin/python3）
@@ -29,8 +33,10 @@ import { fixtureDocxPath } from '@shuji-bonji/doc-translation-ir/fixtures';
 import {
   DeeplHttpTranslator,
   LlmTranslator,
+  type Glossary,
   type Translator,
 } from '@shuji-bonji/dtir-translate-mcp/translate';
+import type { BatchLimits } from '@shuji-bonji/dtir-translate-mcp/translate';
 import {
   translateDocx,
   translateDocxWithGate,
@@ -61,10 +67,22 @@ if (engine === 'deepl' && !process.env.DEEPL_API_KEY) {
   console.error('engine=deepl だが DEEPL_API_KEY が未設定です');
   process.exit(2);
 }
+// 用語集（任意）: GLOSSARY_PATH の JSON を読み込み、両エンジンへ適用。
+const glossary: Glossary | undefined = process.env.GLOSSARY_PATH
+  ? (JSON.parse(readFileSync(process.env.GLOSSARY_PATH, 'utf8')) as Glossary)
+  : undefined;
+if (glossary) console.error(`glossary=${process.env.GLOSSARY_PATH}`);
+// サイズ上限: 明示 env > エンジン別プリセット（LLM はコンテキストが狭いので小さめ）。
+const limitPreset: BatchLimits =
+  engine === 'deepl' ? { maxItems: 50, maxChars: 120_000 } : { maxItems: 20, maxChars: 4_000 };
+const limits: BatchLimits = {
+  maxItems: process.env.BATCH_MAX_ITEMS ? Number(process.env.BATCH_MAX_ITEMS) : limitPreset.maxItems,
+  maxChars: process.env.BATCH_MAX_CHARS ? Number(process.env.BATCH_MAX_CHARS) : limitPreset.maxChars,
+};
 const translator: Translator =
   engine === 'deepl'
-    ? new DeeplHttpTranslator(process.env.DEEPL_API_KEY!, process.env.DEEPL_API_URL)
-    : new LlmTranslator({ model, baseUrl, jsonMode });
+    ? new DeeplHttpTranslator(process.env.DEEPL_API_KEY!, process.env.DEEPL_API_URL, glossary)
+    : new LlmTranslator({ model, baseUrl, jsonMode, glossary });
 const input = readFileSync(inPath);
 const started = Date.now();
 
@@ -79,12 +97,13 @@ if (useGate) {
       targetLang,
       threshold: Number(process.env.XCOMET_THRESHOLD ?? 0.6),
       maxRounds: Number(process.env.XCOMET_MAX_ROUNDS ?? 2),
+      limits,
     });
   } finally {
     await evaluator.close();
   }
 } else {
-  result = await translateDocx(input, translator, { fileName: inPath, targetLang });
+  result = await translateDocx(input, translator, { fileName: inPath, targetLang, limits });
 }
 
 writeFileSync(outPath, result.docx);
@@ -93,7 +112,7 @@ const sec = ((Date.now() - started) / 1000).toFixed(1);
 const { dtir, stats } = result;
 const langs = dtir.language.multilingual?.languagesPresent?.join(',') ?? '(n/a)';
 console.error(
-  `out=${outPath} translated=${stats.translated} batchCalls=${stats.batchCalls} langs=${langs} time=${sec}s`,
+  `out=${outPath} translated=${stats.translated} batchCalls=${stats.batchCalls} chunked=${stats.chunked} langs=${langs} time=${sec}s`,
 );
 if ('gate' in result) {
   const last = result.gate.rounds[result.gate.rounds.length - 1];

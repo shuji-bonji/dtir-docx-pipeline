@@ -98,6 +98,34 @@ claude mcp add -e LLM_MODEL=gpt-4o-mini -e LLM_API_KEY=sk-... dtir-translate -- 
 | `llm`（クラウド） | `LLM_MODEL`, `LLM_API_KEY`  | OpenAI 互換。既定 baseUrl は `https://api.openai.com/v1`                                                                                        |
 | `llm`（ローカル） | `LLM_MODEL`, `LLM_BASE_URL` | 例: `LLM_BASE_URL=http://localhost:11434/v1`（Ollama）。詳細は [`local-llm-usage.md`](./local-llm-usage.md) |
 
+### 4.1 用語集（glossary）— 用語の一貫性
+
+法律・技術文書では用語の訳ブレが品質を損なう（xCOMET はスコアであって用語一貫性を保証しない）。
+**inline な用語対を単一の真実源**とし、`translate_dtir` の `glossaryJson`（CLI は `GLOSSARY_PATH`）で渡すと、
+両エンジンへ同じ用語集が橋渡しされる:
+
+- **LLM**: source 言語ごとに該当用語対をプロンプトへ強制注入（外部状態なし・決定論的）
+- **DeepL**: `deeplIds` の `glossary_id` を source 言語別に適用（DeepL 本来の機構）
+
+混在言語に対応するため **source 言語ごと**（`bySource`）に引く。`'*'` は source 非依存（LLM のみ）。
+
+```jsonc
+{
+  "target": "en-GB",
+  "bySource": {
+    "de-DE": [{ "source": "Vertrag", "target": "Agreement" }],
+    "fr-FR": [{ "source": "résiliation", "target": "termination" }],
+    "*":     [{ "source": "GDPR", "target": "GDPR" }]
+  },
+  // DeepL を使う場合のみ。事前作成して得た id を source 言語ごとに置く
+  "deeplIds": { "de-DE": "xxxxxxxx-xxxx-...", "fr-FR": "yyyyyyyy-..." }
+}
+```
+
+DeepL の `glossary_id` は事前作成が必要。`DeeplHttpTranslator.createDeeplGlossary(apiKey, {name, sourceLang, targetLang, entries})`
+で inline 用語対から作成して id を得られる（または DeepL の glossary 系ツール/コンソールで作成）。
+LLM だけ使う場合は `deeplIds` 不要で、`bySource` の用語対だけで効く。
+
 ## 5. 利用フロー（会話での使い方）
 
 ### 5.1 基本シーケンス
@@ -174,8 +202,12 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
 | `targetLang` | –    | 翻訳先 BCP47（既定: `dtir.language.target`）              |
 | `engine`     | –    | `deepl` \| `llm`（既定: `LLM_MODEL` があれば llm）        |
 | `apiUrl`     | –    | DeepL API ベース URL（省略時はキー末尾 `:fx` で Free/Pro 自動判定） |
+| `glossaryJson` | –  | 用語集 JSON（§4.1）。用語の一貫性を強制                   |
+| `maxItems`   | –    | 1バッチの最大セグメント数（既定 deepl=50 / llm=20）       |
+| `maxChars`   | –    | 1バッチの最大合計文字数（既定 deepl=120000 / llm=4000）   |
 
-戻り: `{ engine, stats: { translated, batchCalls, evaluated }, dtir }`。
+戻り: `{ engine, stats: { translated, batchCalls, chunked, evaluated }, dtir }`
+（`chunked` はサイズ上限で言語グループがさらに分割された回数）。
 
 ### `dtir_to_docx` (dtir-ooxml-writer)
 
@@ -187,12 +219,20 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
 
 戻り: `{ fileName, byteSize, docxBase64 }`。
 
-## 7. 注意・制限（v0.1）
+## 7. 注意・制限
 
+- **再帰走査（v0.2 reader/writer）**: 表（`w:tbl`／結合セル）・脚注／文末脚注（`footnotes.xml`／
+  `endnotes.xml`）・ハイパーリンク内テキスト・追跡変更（`w:ins`）を**抽出・訳出対象に含む**。
+  以前は body 直下・段落直下ランのみで取りこぼしていた構造を一括でカバーする
+  （回帰テスト: reader `npm run test:torture` ＝ 7/7、writer `npm run test:torture`）。
+  削除済みテキスト（`w:del`）は対象外。
+- **サイズバッチ**: 言語グループは `maxItems` / `maxChars` でチャンク分割され、長文の単一言語
+  文書が「1 巨大バッチ → DeepL リクエスト上限 / LLM コンテキスト上限超過」になるのを防ぐ
+  （セグメント境界は割らない。既定 deepl=50件/120000字、llm=20件/4000字。`stats.chunked` で分割回数を確認）。
 - **コンテキスト消費**: DTIR JSON と base64 が会話を流れるため、大きい docx ではトークンを食う。
   数十ページ規模はライブラリ経由（`dtir-docx-pipeline` の `translateDocx()`）が現実的。
-- **collapse 既定**: 段内書式（太字・色の途中切替）は失われ、先頭ランの書式に統一される。
-  保持は `text.runs` を使う tag-aware writer（v0.2）待ち。
+- **collapse 既定**: 段内書式（太字・色・ハイパーリンクの表示色/下線）は失われ、先頭ランの書式に
+  統一される。保持は `text.runs` を使う tag-aware writer（②脱collapse）待ち。
 - **段落内の言語切替は拾えない**: `language` はセグメント単位。
 - **不可触の保証**: TOC 等の複合フィールド・数値のみ・`sectPr`・画像は IR に乗らないため原理的に崩れない。
 - 品質検証は `@shuji-bonji/xcomet-mcp` の `xcomet_batch_evaluate` に
