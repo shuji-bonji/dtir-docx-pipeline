@@ -211,6 +211,30 @@ soffice --headless --convert-to pdf --outdir ./demo ./demo/output.ja.docx
 
 > `Task policy set failed` という警告は macOS 上の LibreOffice の無害な QoS 警告。無視してよい。`--outdir` を省くとカレントに PDF が出る。
 
+### DeepL エンジンで使う（a-3 / クラウド翻訳）
+
+同じ `cli.ts` で、`DEEPL_API_KEY` を渡すと**翻訳エンジンが DeepL に切り替わる**（ローカルLLMの代わり）。
+ヘッドレス・固定 DAG・xCOMET ゲートはそのままで、**エンジンだけ差し替わる**（`Translator` 抽象のご利益）。
+
+```sh
+# Free/Pro はキー末尾 ":fx" で自動判定（Pro キーでも DEEPL_API_URL は不要）
+DEEPL_API_KEY=<your-deepl-key> TARGET_LANG=ja \
+  npx tsx src/cli.ts demo/mixed-with-ja.en-GB.docx demo/deepl-out-ja.docx
+
+# 品質ゲートも併用可（DeepL 訳を xCOMET で採点）
+DEEPL_API_KEY=<key> XCOMET_GATE=1 XCOMET_PYTHON_PATH=~/.xcomet-venv/bin/python3 \
+  npx tsx src/cli.ts in.docx out.docx
+```
+
+| env | 意味 |
+| --- | --- |
+| `ENGINE` | `deepl` \| `llm`（省略時: `DEEPL_API_KEY` があれば deepl、無ければ llm） |
+| `DEEPL_API_KEY` | DeepL キー。Free(`...:fx`)/Pro を自動判定してエンドポイントを選ぶ |
+| `DEEPL_API_URL` | 任意。明示指定が優先（通常は不要） |
+
+> 注意: ローカルLLMを使いたいのに `DEEPL_API_KEY` が環境に残っていると `engine=deepl` になる。その場合は `ENGINE=llm` を明示する。
+> `model-bench` でも `MODELS="deepl,aya-expanse:8b,tower-plus:9b"` のように **DeepL を基準線**として混在採点できる（ローカルが DeepL にどこまで肉薄するか）。
+
 ## 4. フェーズ2 — xCOMET 品質ゲート＋再翻訳ループ
 
 ### 4.1 xCOMET セットアップ（クライアント機・初回のみ）
@@ -347,6 +371,51 @@ ollama rm tower-plus:9b hf.co/mradermacher/Tower-Plus-9B-GGUF:Q4_K_M aya-expanse
 - **`LLM_BASE_URL` 差し替えだけでエンジン交換**できる Translator 抽象 → L3 の「LLM Gateway / ベンダー非依存」設計
 - **評価者と被評価者の同族性**（Tower+ と xCOMET が同じ Unbabel）→ L4 の評価バイアスの構造問題
 - **JSON モード（grammar 強制）と是正リトライ**による弱いローカルモデル対策 → L4 の構造化出力の信頼性
+
+## 実装記録・設計判断（2026-06-11 全 Phase 完了）
+
+> 旧 `local-llm-implementation-guide.ja.md`（実装指示書）の §10 を移植。指示書は役目を終えたため統合。
+
+実機（クライアント: mikuro M5 Pro 48GB / 翻訳エンジン: neko8 M1 Pro 32GB の Ollama）で Phase 1〜3 を実装・検証済み。
+
+### 実装物（すべて `dtir-docx-pipeline` 内。他5リポは未改変）
+
+| ファイル | 内容 | 指示書との差分 |
+|---|---|---|
+| `src/cli.ts` | ヘッドレス翻訳 CLI（Phase 1/2 共用・DeepL/ローカル両対応） | 引数省略時に同梱フィクスチャを使用、`XCOMET_GATE=1` でゲート、`DEEPL_API_KEY` で a-3 |
+| `src/verify.ts` | 受け入れ検証 CLI | 指示書外の追加。`validateDtir` 空＋元 docx とのセグメント id 集合比較 |
+| `src/xcomet-evaluator.ts` | `XcometMcpEvaluator` | `evaluate()`（Evaluator 契約）に加え `evaluateBatch()` を追加 |
+| `src/pipeline.ts` | `translateDocxWithGate()` 追記 | orchestrator 側にループ。下記2点を意図的に変更 |
+| `test/model-bench.ts` | モデル比較ハーネス | Markdown 表を stdout 出力、失敗モデルは ❌ 行で続行、DeepL を基準線に混在可 |
+| `package.json` | `@modelcontextprotocol/sdk` を依存に追加 | xcomet-mcp-server の stdio クライアントに必要 |
+
+**指示書からの意図的な設計変更（2点）**:
+
+1. **採点は `translateDtir` の evaluator 経由ではなく分離バッチ**。単発 `xcomet_evaluate` の逐次は CPU で1ペア数秒 × 全セグメントとなるため、`xcomet_batch_evaluate`（モデル常駐）で一括採点する。
+2. **再翻訳は「改善時のみ採用」**。再訳が旧訳よりスコア劣化した場合は旧訳を保持する（指示書 §4 の「改善しなければ最後の訳を採用」より保守的）。
+
+### モデル準備の実績
+
+- `tower-plus:9b`: Ollama 公式に無いため `ollama pull hf.co/mradermacher/Tower-Plus-9B-GGUF:Q4_K_M`（5.8GB）→ `ollama cp` で別名付与。Modelfile 手書き不要（チャットテンプレートは GGUF 同梱）。**CC-BY-NC-SA-4.0（非商用）に注意**。
+- xCOMET-XL はクライアント機（M5）側 venv に常駐。neko8 は翻訳エンジン専任。
+
+### 検証結果
+
+**Phase 1**（`mixed-with-ja.en-GB.docx` → ja / tower-plus:9b）: `translated=7 batchCalls=4 langs=nl-NL,fr-FR,en-GB,en-US time=8.7s`。`verify.ts` ✅・LibreOffice PDF 変換 ✅。
+
+**Phase 2**: 通常閾値(0.6)では `avg=0.9875 failing=0`。ループ動作は `XCOMET_THRESHOLD=0.995` で強制発火させ確認 — round 1 で改善1件採用、round 2 改善なし、maxRounds 打ち切り＋残存 id（`remainingFailing`）のログ出力まで確認済み。
+
+**Phase 3**（7セグメント・単一文書のため傾向把握用）:
+
+| モデル | 平均スコア | 最小スコア | critical | 所要時間 |
+|---|---:|---:|---:|---:|
+| tower-plus:9b | 98.75% | 92.13% | 0 | 14.4s |
+| gemma4:latest | 98.62% | 92.13% | 0 | 16.7s |
+| aya-expanse:8b | 98.37% | 92.13% | 0 | 49.0s ※初回ロード込み |
+
+留意点: 最小スコア 92.13% が3モデル同値（共通の難所セグメント）。また Tower+ と xCOMET は同じ Unbabel 製のため、評価軸の同族性バイアスがある（公平な比較には COMET 系以外の指標の併用を検討）。
+
+**a-3（CLI × DeepL）**: `:fx` 自動判定で Pro キーが `api.deepl.com` に自動ルーティング。`translated=7 batchCalls=4 time=2.0s` で訳 docx 生成を確認。
 
 ## 改訂履歴
 

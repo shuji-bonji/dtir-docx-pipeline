@@ -14,7 +14,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { fixtureDocxPath } from '@shuji-bonji/doc-translation-ir/fixtures';
-import { LlmTranslator } from '@shuji-bonji/dtir-translate-mcp/translate';
+import { DeeplHttpTranslator, LlmTranslator } from '@shuji-bonji/dtir-translate-mcp/translate';
 import { translateDocx } from '../src/pipeline.js';
 import { XcometMcpEvaluator } from '../src/xcomet-evaluator.js';
 
@@ -49,11 +49,15 @@ try {
     console.error(`--- ${model} ---`);
     const t0 = Date.now();
     try {
-      const { dtir, stats } = await translateDocx(
-        input,
-        new LlmTranslator({ model, baseUrl, jsonMode }),
-        { fileName: inPath, targetLang },
-      );
+      // model='deepl' を基準線として混在可能（要 DEEPL_API_KEY）
+      const translator =
+        model === 'deepl'
+          ? new DeeplHttpTranslator(process.env.DEEPL_API_KEY ?? '')
+          : new LlmTranslator({ model, baseUrl, jsonMode });
+      const { dtir, stats } = await translateDocx(input, translator, {
+        fileName: inPath,
+        targetLang,
+      });
       const segs = dtir.segments.filter((s) => s.translatable && s.translation);
       const evals = await evaluator.evaluateBatch(
         segs.map((s) => ({ source: s.text.source, translation: s.translation!.text })),

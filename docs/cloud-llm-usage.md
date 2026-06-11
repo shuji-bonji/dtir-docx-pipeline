@@ -2,7 +2,7 @@
 
 > この文書を読むと、**Claude Desktop / Claude Code から DTIR MCP 群を呼び出し、
 > 混在言語 `.docx` を書式・画像・目次を崩さずに翻訳できる**ようになる。
-> ローカル LLM（Ollama）でのヘッドレス利用は [`local-llm-implementation-guide.ja.md`](./local-llm-implementation-guide.ja.md) を参照
+> ローカル LLM（Ollama）でのヘッドレス利用は [`local-llm-usage.md`](./local-llm-usage.md) を参照
 > （本文書はエンジン切替の接続点のみ示す）。
 
 ## 対象リポジトリ
@@ -94,9 +94,9 @@ claude mcp add -e LLM_MODEL=gpt-4o-mini -e LLM_API_KEY=sk-... dtir-translate -- 
 
 | engine            | 必要 env                    | 備考                                                                                                                                            |
 | ----------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `deepl`           | `DEEPL_API_KEY`             | HTTP API の `text[]` 配列で group 単位 1 リクエスト。`apiUrl` 引数で Pro 切替（既定 api-free）                                                  |
+| `deepl`           | `DEEPL_API_KEY`             | HTTP API の `text[]` 配列で group 単位 1 リクエスト。Free/Pro はキー末尾 `:fx` で自動判定（`apiUrl`/`DEEPL_API_URL` で明示も可）                                                  |
 | `llm`（クラウド） | `LLM_MODEL`, `LLM_API_KEY`  | OpenAI 互換。既定 baseUrl は `https://api.openai.com/v1`                                                                                        |
-| `llm`（ローカル） | `LLM_MODEL`, `LLM_BASE_URL` | 例: `LLM_BASE_URL=http://localhost:11434/v1`（Ollama）。詳細は [`local-llm-implementation-guide.ja.md`](./local-llm-implementation-guide.ja.md) |
+| `llm`（ローカル） | `LLM_MODEL`, `LLM_BASE_URL` | 例: `LLM_BASE_URL=http://localhost:11434/v1`（Ollama）。詳細は [`local-llm-usage.md`](./local-llm-usage.md) |
 
 ## 5. 利用フロー（会話での使い方）
 
@@ -173,7 +173,7 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
 | `dtirJson`   | ✅   | reader 出力の DTIR JSON 文字列                            |
 | `targetLang` | –    | 翻訳先 BCP47（既定: `dtir.language.target`）              |
 | `engine`     | –    | `deepl` \| `llm`（既定: `LLM_MODEL` があれば llm）        |
-| `apiUrl`     | –    | DeepL API ベース URL（既定 `https://api-free.deepl.com`） |
+| `apiUrl`     | –    | DeepL API ベース URL（省略時はキー末尾 `:fx` で Free/Pro 自動判定） |
 
 戻り: `{ engine, stats: { translated, batchCalls, evaluated }, dtir }`。
 
@@ -208,4 +208,4 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
 
 - DTIR 契約の設計詳細: `doc-translation-ir/README.md`
 - 実機 E2E の検証結果（実 DeepL・xCOMET 平均 0.993）: `dtir-translate-mcp/README.md` / 本リポジトリ `demo/`
-- ローカル LLM（Ollama）エンジンでのヘッドレス利用・実装手順: [`local-llm-implementation-guide.ja.md`](./local-llm-implementation-guide.ja.md)
+- ローカル LLM（Ollama）エンジンでのヘッドレス利用・実装手順: [`local-llm-usage.md`](./local-llm-usage.md)

@@ -14,6 +14,9 @@
  *   TARGET_LANG         既定 en-GB
  *   LLM_JSON_MODE       "false" で JSON モード無効（非対応モデル向け）
  *
+ *   ENGINE              'deepl' | 'llm'（省略時: DEEPL_API_KEY があれば deepl=a-3、無ければ llm=b-3）
+ *   DEEPL_API_KEY       engine=deepl 用の DeepL キー（DEEPL_API_URL で Pro 切替）
+ *
  *   XCOMET_GATE         "1" で Phase 2 品質ゲート＋再翻訳ループを有効化
  *   XCOMET_PYTHON_PATH  venv の python（例 ~/.xcomet-venv/bin/python3）
  *   XCOMET_SERVER_ENTRY xcomet-mcp-server/dist/index.js（既定: sibling 解決）
@@ -23,7 +26,11 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fixtureDocxPath } from '@shuji-bonji/doc-translation-ir/fixtures';
-import { LlmTranslator } from '@shuji-bonji/dtir-translate-mcp/translate';
+import {
+  DeeplHttpTranslator,
+  LlmTranslator,
+  type Translator,
+} from '@shuji-bonji/dtir-translate-mcp/translate';
 import {
   translateDocx,
   translateDocxWithGate,
@@ -37,14 +44,27 @@ const baseUrl = process.env.LLM_BASE_URL ?? 'http://localhost:11434/v1';
 const targetLang = process.env.TARGET_LANG ?? 'en-GB';
 const jsonMode = process.env.LLM_JSON_MODE !== 'false';
 const useGate = process.env.XCOMET_GATE === '1';
+// エンジン選択: ENGINE 明示、なければ DEEPL_API_KEY があれば deepl(a-3)、無ければ llm(b-3)
+const engine = process.env.ENGINE ?? (process.env.DEEPL_API_KEY ? 'deepl' : 'llm');
 
 const [inPath = fixtureDocxPath, outPath = `./output.${targetLang}.docx`] =
   process.argv.slice(2);
 
-console.error(`model=${model} baseUrl=${baseUrl} targetLang=${targetLang} gate=${useGate}`);
+console.error(
+  engine === 'deepl'
+    ? `engine=deepl targetLang=${targetLang} gate=${useGate}`
+    : `engine=llm model=${model} baseUrl=${baseUrl} targetLang=${targetLang} gate=${useGate}`,
+);
 console.error(`in=${inPath}`);
 
-const translator = new LlmTranslator({ model, baseUrl, jsonMode });
+if (engine === 'deepl' && !process.env.DEEPL_API_KEY) {
+  console.error('engine=deepl だが DEEPL_API_KEY が未設定です');
+  process.exit(2);
+}
+const translator: Translator =
+  engine === 'deepl'
+    ? new DeeplHttpTranslator(process.env.DEEPL_API_KEY!, process.env.DEEPL_API_URL)
+    : new LlmTranslator({ model, baseUrl, jsonMode });
 const input = readFileSync(inPath);
 const started = Date.now();
 
