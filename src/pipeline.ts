@@ -27,6 +27,8 @@ export interface TranslateDocxOptions {
   onMissingTranslation?: 'keep' | 'error';
   /** バッチのサイズ上限（長文の単一巨大バッチを防ぐ。既定 DEFAULT_BATCH_LIMITS）。 */
   limits?: BatchLimits;
+  /** 段内書式の扱い（'collapse' 既定 / 'runs' で太字・色・リンク保持）。 */
+  inlineFormatting?: 'collapse' | 'runs';
 }
 
 export interface TranslateDocxResult {
@@ -55,6 +57,7 @@ export async function translateDocx(
     targetLang: options.targetLang,
     evaluator: options.evaluator,
     limits: options.limits,
+    inlineFormatting: options.inlineFormatting,
   });
   const out = await dtirToDocx(dtir, docx, {
     onMissingTranslation: options.onMissingTranslation ?? 'keep',
@@ -87,6 +90,8 @@ export interface QualityGateOptions {
   onMissingTranslation?: 'keep' | 'error';
   /** バッチのサイズ上限（初回翻訳・再翻訳の両方に適用。既定 DEFAULT_BATCH_LIMITS）。 */
   limits?: BatchLimits;
+  /** 段内書式の扱い（'collapse' 既定 / 'runs' で太字・色・リンク保持）。 */
+  inlineFormatting?: 'collapse' | 'runs';
   /** ラウンドごとのログ（既定 console.error）。 */
   log?: (line: string) => void;
 }
@@ -143,6 +148,7 @@ export async function translateDocxWithGate(
   const { stats } = await translateDtir(dtir, translator, {
     targetLang: options.targetLang,
     limits,
+    inlineFormatting: options.inlineFormatting,
   });
 
   const translatedSegs = dtir.segments.filter(

@@ -205,6 +205,7 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
 | `glossaryJson` | –  | 用語集 JSON（§4.1）。用語の一貫性を強制                   |
 | `maxItems`   | –    | 1バッチの最大セグメント数（既定 deepl=50 / llm=20）       |
 | `maxChars`   | –    | 1バッチの最大合計文字数（既定 deepl=120000 / llm=4000）   |
+| `inlineFormatting` | – | `collapse`（既定）/ `runs`（段内の太字・色・リンクを保持。§7） |
 
 戻り: `{ engine, stats: { translated, batchCalls, chunked, evaluated }, dtir }`
 （`chunked` はサイズ上限で言語グループがさらに分割された回数）。
@@ -231,8 +232,11 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
   （セグメント境界は割らない。既定 deepl=50件/120000字、llm=20件/4000字。`stats.chunked` で分割回数を確認）。
 - **コンテキスト消費**: DTIR JSON と base64 が会話を流れるため、大きい docx ではトークンを食う。
   数十ページ規模はライブラリ経由（`dtir-docx-pipeline` の `translateDocx()`）が現実的。
-- **collapse 既定**: 段内書式（太字・色・ハイパーリンクの表示色/下線）は失われ、先頭ランの書式に
-  統一される。保持は `text.runs` を使う tag-aware writer（②脱collapse）待ち。
+- **段内書式（collapse / runs）**: 既定の `collapse` は段内書式（太字・色・リンクの表示色/下線）を
+  捨てて先頭ランの書式に統一する。`inlineFormatting:'runs'` にすると、複数ラン段落を `<x id>` インライン
+  タグで翻訳し（DeepL `tag_handling=xml` / LLM へタグ保持指示）、訳をラン別に復元して各ランの書式を
+  保ったまま分配する（`translation.runTexts`）。タグ復元に失敗した段落は自動で collapse にフォールバック
+  （fail-safe）。**段落テキストの正しさは常に保たれ、構造も壊れない**。
 - **段落内の言語切替は拾えない**: `language` はセグメント単位。
 - **不可触の保証**: TOC 等の複合フィールド・数値のみ・`sectPr`・画像は IR に乗らないため原理的に崩れない。
 - 品質検証は `@shuji-bonji/xcomet-mcp` の `xcomet_batch_evaluate` に

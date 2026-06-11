@@ -20,6 +20,7 @@
  *                       DeepL は deeplIds の glossary_id を source 言語別に適用
  *   BATCH_MAX_ITEMS     1バッチの最大セグメント数（既定 deepl=50 / llm=20）
  *   BATCH_MAX_CHARS     1バッチの最大合計文字数（既定 deepl=120000 / llm=4000）
+ *   INLINE_FORMATTING   'collapse'（既定）| 'runs'（段内の太字・色・リンクを保持）
  *
  *   XCOMET_GATE         "1" で Phase 2 品質ゲート＋再翻訳ループを有効化
  *   XCOMET_PYTHON_PATH  venv の python（例 ~/.xcomet-venv/bin/python3）
@@ -50,6 +51,7 @@ const baseUrl = process.env.LLM_BASE_URL ?? 'http://localhost:11434/v1';
 const targetLang = process.env.TARGET_LANG ?? 'en-GB';
 const jsonMode = process.env.LLM_JSON_MODE !== 'false';
 const useGate = process.env.XCOMET_GATE === '1';
+const inlineFormatting = process.env.INLINE_FORMATTING === 'runs' ? 'runs' : 'collapse';
 // エンジン選択: ENGINE 明示、なければ DEEPL_API_KEY があれば deepl(a-3)、無ければ llm(b-3)
 const engine = process.env.ENGINE ?? (process.env.DEEPL_API_KEY ? 'deepl' : 'llm');
 
@@ -98,12 +100,18 @@ if (useGate) {
       threshold: Number(process.env.XCOMET_THRESHOLD ?? 0.6),
       maxRounds: Number(process.env.XCOMET_MAX_ROUNDS ?? 2),
       limits,
+      inlineFormatting,
     });
   } finally {
     await evaluator.close();
   }
 } else {
-  result = await translateDocx(input, translator, { fileName: inPath, targetLang, limits });
+  result = await translateDocx(input, translator, {
+    fileName: inPath,
+    targetLang,
+    limits,
+    inlineFormatting,
+  });
 }
 
 writeFileSync(outPath, result.docx);
