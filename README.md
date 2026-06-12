@@ -1,3 +1,5 @@
+**日本語** | [English](./README.en.md)
+
 # @shuji-bonji/dtir-docx-pipeline
 
 混在言語 docx 翻訳の **end-to-end ハーネス**。`dtir-ooxml-reader-mcp` →

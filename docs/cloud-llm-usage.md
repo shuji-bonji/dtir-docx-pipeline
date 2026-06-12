@@ -1,3 +1,5 @@
+**日本語** | [English](./cloud-llm-usage.en.md)
+
 # クラウド LLM での利用マニュアル — DTIR docx 翻訳パイプライン
 
 > この文書を読むと、**Claude Desktop / Claude Code から DTIR MCP 群を呼び出し、

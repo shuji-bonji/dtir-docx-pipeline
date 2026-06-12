@@ -1,3 +1,5 @@
+**日本語** | [English](./local-llm-usage.en.md)
+
 # ローカルLLM 活用手順書 — 混在言語 docx 翻訳パイプライン (dtir MCP 群)
 
 > **この章でできるようになること**: neko8 の Ollama を翻訳エンジンとして、自作 dtir MCP 群で混在言語 docx を**クラウドに出さず**ヘッドレス翻訳し、xCOMET 品質ゲート・モデル比較まで回せるようになる。
