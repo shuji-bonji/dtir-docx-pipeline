@@ -237,12 +237,45 @@ Claude は自律的に 3 ツールを順に呼ぶ。`translate_dtir` の戻り�
   タグで翻訳し（DeepL `tag_handling=xml` / LLM へタグ保持指示）、訳をラン別に復元して各ランの書式を
   保ったまま分配する（`translation.runTexts`）。タグ復元に失敗した段落は自動で collapse にフォールバック
   （fail-safe）。**段落テキストの正しさは常に保たれ、構造も壊れない**。
+  - **強い語順移動での限界（実機確認済）**: DeepL の `tag_handling` は「タグ数と相対順序」は守るが
+    **意味的な追従はしない**。例: 独語の太字 "gestern" を含む "Der Vertrag wurde **gestern** unterzeichnet."
+    → "The contract was **signed** yesterday."（runTexts=`["The contract was ","signed"," yesterday."]`）。
+    本来の "yesterday" が文末へ動いたのにタグは位置順で配られ、**太字が "signed" に乗る**。
+    破壊ではない（文は正しい・太字は1語・構造健全）が、**語順が大きく変わる対では強調が別の語に移りうる**。
+    同語族・語順変化の小さい対では実害が出にくい。
+  - **エンジン別の向き不向き（実機比較済）**: runs モードは **DeepL 向き**（`<x>` タグを確実に保持）。
+    一方 **翻訳特化のローカルモデル（例 tower-plus:9b）はタグを除去しがち**で、その場合は復元失敗 →
+    自動 collapse（書式は付かないが文は正しく構造も健全）。同じ独語例で DeepL は太字を保持（語ズレあり）、
+    tower-plus は collapse に落ちた。**書式保持を狙うなら DeepL（a-2/a-3）**、ローカル（b-2/b-3）で狙うなら
+    タグ指示に従う**汎用チャットモデル**か `LLM_JSON_MODE=false` を試す。
 - **段落内の言語切替は拾えない**: `language` はセグメント単位。
 - **不可触の保証**: TOC 等の複合フィールド・数値のみ・`sectPr`・画像は IR に乗らないため原理的に崩れない。
 - 品質検証は `@shuji-bonji/xcomet-mcp` の `xcomet_batch_evaluate` に
   `{source: text.source, translation: translation.text}` を流せばよい（lang 指定不要）。
 
-## 8. アンインストール
+## 8. トラブルシュート
+
+### Claude Desktop × ローカルLLM で `translate_dtir failed: fetch failed`（b-2）
+
+`engine: "llm"` でローカルLLM（例 neko8 の Ollama）に出るとき、**Terminal の `curl` は通るのに MCP からの fetch だけ失敗**する典型パターン。
+
+**真因**: macOS の「ローカルネットワーク」プライバシー権限は**接続する実行バイナリ単位**で効く。MCP サーバは Claude.app ではなく **Claude が spawn する `node` プロセス**が LAN（Ollama）へ出るため、**Claude.app が許可済みでも `node` が未許可だと接続がブロック**される。さらに nvm 等で node が複数版あると、**Claude が実際に使う版**を許可する必要がある（Claude Desktop の MCP ログ `~/Library/Logs/Claude/mcp-server-<name>.log` の `Using MCP server command: .../vX.Y.Z/bin/node ...` で版を確認）。
+
+**確定テスト**（Claude が使う node の絶対パスで実行。OK なら node 自体は到達可能＝あとは権限の問題）:
+
+```sh
+/Users/<you>/.nvm/versions/node/vX.Y.Z/bin/node \
+  -e 'fetch("http://<ollamaのIP>:11434/api/tags").then(_=>console.log("OK")).catch(e=>console.log("FAIL",e.cause||e))'
+```
+
+**対処**:
+
+1. システム設定 → プライバシーとセキュリティ → **ローカルネットワーク** で、Claude が使う **`node`（該当版）を ON**
+2. Claude Desktop を **⌘Q で完全終了 → 再起動**（権限ありで MCP サーバを respawn）
+
+補足: `.local`（mDNS）名でも IP でも症状は同じ（アドレスの問題ではない）。切り分けには「Terminal の `curl` は通るか」「Claude が使う node で `node -e fetch` は通るか」を見る。コールドロード由来なら症状は `fetch failed` でなく `Request timed out` 側に出るので、事前に `ollama run <model> ""` でウォームしておくと混同を避けられる。
+
+## 9. アンインストール
 
 - Claude Desktop: `claude_desktop_config.json` から 3 エントリを削除して再起動
 - Claude Code: `claude mcp remove dtir-ooxml-reader` ほか 3 サーバを各々 remove
