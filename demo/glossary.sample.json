@@ -1,0 +1,19 @@
+{
+  "target": "ja",
+  "bySource": {
+    "en": [
+      { "source": "Authentication Token", "target": "認証トークン" },
+      { "source": "API endpoint", "target": "APIエンドポイント" },
+      { "source": "Firmware", "target": "ファームウェア" },
+      { "source": "Management Console", "target": "管理コンソール" }
+    ],
+    "de": [
+      { "source": "Authentication Token", "target": "認証トークン" },
+      { "source": "API-Endpunkt", "target": "APIエンドポイント" },
+      { "source": "Verwaltungskonsole", "target": "管理コンソール" }
+    ],
+    "*": [
+      { "source": "Smart Sensor Pro", "target": "Smart Sensor Pro" }
+    ]
+  }
+}
